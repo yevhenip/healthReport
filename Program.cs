@@ -2,6 +2,25 @@
 // Format: {ServiceName} {Date} {Uptime} {UptimePercent} {UnhealthyPercent} {DegradedPercent}
 // Consider health data could be unavailable, for example monitoring started 1 day ago,
 // in that case display Unavailable for periods preceding
+/*
+ * Report for past 14 days for Service1
+Format: {ServiceName} {Date} {Uptime} {UptimePercent} {UnhealthyPercent} {DegradedPercent}
+Service1 6/28/2023 Unavailable
+Service1 6/29/2023 Unavailable
+Service1 6/30/2023 Unavailable
+Service1 7/1/2023 18:09:26 75.65% 0.00% 0.00%
+Service1 7/2/2023 05:50:34 24.35% 75.65% 0.00%
+Service1 7/3/2023 00:00:00 0.00% 100.00% 0.00%
+Service1 7/4/2023 00:00:00 0.00% 100.00% 0.00%
+Service1 7/5/2023 00:00:00 0.00% 100.00% 0.00%
+Service1 7/6/2023 00:00:00 0.00% 100.00% 0.00%
+Service1 7/7/2023 00:00:00 0.00% 100.00% 0.00%
+Service1 7/8/2023 00:00:00 0.00% 100.00% 0.00%
+Service1 7/9/2023 18:09:26 75.65% 24.35% 0.00%
+Service1 7/10/2023 23:55:30 99.69% 0.00% 0.31%
+Service1 7/11/2023 23:40:00 98.61% 1.39% 0.00%
+Service1 7/12/2023 24:00:00 100.00% 0.00% 0.00%`
+ */
 
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Testing.HealthReport;
@@ -19,41 +38,90 @@ var healthData = new List<HealthDataItem>
 };
 
 Console.WriteLine(dateProvider.OffsetNow);
-Console.WriteLine("Hello, World!");
 
 const string unavailable = "Unavailable";
+var healthyTime = TimeSpan.Zero;
+var degradedTime = TimeSpan.Zero;
+var unhealthyTime = TimeSpan.Zero;
+var lastStatus = HealthStatus.Unhealthy;
+var lastDateTime = DateTimeOffset.MinValue;
+var currentDate = dateProvider.OffsetNow.AddDays(-14);
+var totalSeconds = TimeSpan.FromDays(1).TotalSeconds;
+healthData.Sort((prev, curr) => prev.Date.CompareTo(curr.Date));
+var i = 0;
 
-var groupedHealthData = healthData
-    .GroupBy(x => new { x.Date.Year, x.Date.Month, x.Date.Day })
-    .ToList();
-
-foreach (var dataItems in groupedHealthData)
+while (currentDate.Date <= dateProvider.OffsetNow)
 {
-    var dataItemsList = dataItems.ToList();
-    var dateTime = dataItemsList[0].Date;
-
-    if (dateTime < dateProvider.OffsetNow.AddDays(-14))
-        continue;
-
-    var count = dataItemsList.Count;
-    var degradedCount = dataItemsList.Count(x => x.Status == HealthStatus.Degraded);
-    var unhealthyCount = dataItemsList.Count(x => x.Status == HealthStatus.Unhealthy);
-
-    var minDate = dataItemsList.Min(x => x.Date);
-    var maxDate = dataItemsList.Max(x => x.Date);
-    var timeDifference = maxDate - minDate;
-    var uptimePercentage = timeDifference.TotalHours / TimeSpan.FromDays(1).TotalHours * 100;
-    uptimePercentage = uptimePercentage == 0 ? 100 : uptimePercentage;
-
-    var degradedPercentage = unavailable;
-    var unhealthyPercentage = unavailable;
-
-    if (dateTime.DateTime.Date != dateProvider.OffsetNow.DateTime.Date)
+    if (i == healthData.Count)
     {
-        degradedPercentage = $"{(double)degradedCount / count * 100:F2}%";
-        unhealthyPercentage = $"{(double)unhealthyCount / count * 100:F2}%";
+        --i;
+        ProcessState();
+        ++i;
     }
+    else if (currentDate.Date < healthData[i].Date.Date)
+    {
+        if (i == 0)
+        {
+            Console.WriteLine($"{healthData[i].Service} {currentDate.DateTime:MM/dd/yyyy} {unavailable}");
+            currentDate = currentDate.AddDays(1);
+            continue;
+        }
+
+        ProcessState();
+    }
+    else if (currentDate.Date == healthData[i].Date.Date)
+    {
+        if (i == 0)
+        {
+            lastStatus = healthData[i].Status;
+            lastDateTime = healthData[i].Date;
+            ++i;
+            continue;
+        }
+
+        var diff = healthData[i].Date.Subtract(lastDateTime);
+        AddTime(diff, lastStatus);
+
+        lastStatus = healthData[i].Status;
+        lastDateTime = healthData[i].Date;
+        ++i;
+    }
+}
+
+Console.WriteLine("Hello, World!");
+return;
+
+void AddTime(TimeSpan time, HealthStatus status)
+{
+    switch (status)
+    {
+        case HealthStatus.Unhealthy:
+            unhealthyTime = unhealthyTime.Add(time);
+            break;
+        case HealthStatus.Degraded:
+            degradedTime = degradedTime.Add(time);
+            break;
+        case HealthStatus.Healthy:
+            healthyTime = healthyTime.Add(time);
+            break;
+        default:
+            throw new ArgumentOutOfRangeException();
+    }
+}
+
+void ProcessState()
+{
+    var missedTime = lastDateTime.Date.AddDays(1).Subtract(lastDateTime.DateTime);
+    AddTime(missedTime, lastStatus);
 
     Console.WriteLine(
-        $"{dataItemsList[0].Service} {dateTime.DateTime:yyyy-M-d} {timeDifference} {uptimePercentage:F2}% {unhealthyPercentage} {degradedPercentage}");
+        $"{healthData[i].Service} {currentDate.DateTime:MM/dd/yyyy} {healthyTime.ToString("")} " +
+        $"{healthyTime.TotalSeconds / totalSeconds * 100:F}% " +
+        $"{unhealthyTime.TotalSeconds / totalSeconds * 100:F}% " +
+        $"{degradedTime.TotalSeconds / totalSeconds * 100:F}%");
+
+    healthyTime = TimeSpan.Zero;
+    degradedTime = TimeSpan.Zero;
+    unhealthyTime = TimeSpan.Zero;
+    lastDateTime = currentDate = currentDate.AddDays(1).Date;
 }
